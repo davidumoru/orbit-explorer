@@ -1,7 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  turbopack: {
+    resolveAlias: {
+      "#wasm-single-thread": "./stubs/satellite-wasm-stub.js",
+      "#wasm-multi-thread": "./stubs/satellite-wasm-stub.js",
+    },
+  },
 };
 
 export default nextConfig;
