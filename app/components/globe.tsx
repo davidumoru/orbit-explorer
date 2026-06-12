@@ -14,6 +14,7 @@ import {
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import type { ImageryKey } from "./imagery";
 import type { CatalogSat } from "./catalog";
+import type { Observer } from "./passes";
 
 declare global {
   interface Window {
@@ -79,16 +80,34 @@ function orbitPath(satrec: SatRec, around: Date): Cesium.Cartesian3[] {
   return positions;
 }
 
+function groundTrackPath(satrec: SatRec, around: Date): Cesium.Cartesian3[] {
+  const positions: Cesium.Cartesian3[] = [];
+  const start = around.getTime() - ORBIT_WINDOW_MIN * 60_000;
+  const end = around.getTime() + ORBIT_WINDOW_MIN * 60_000;
+  for (let t = start; t <= end; t += ORBIT_STEP_SEC * 1000) {
+    const date = new Date(t);
+    const pv = propagate(satrec, date);
+    if (!pv) continue;
+    const geo = eciToGeodetic(pv.position, gstime(date));
+    positions.push(
+      Cesium.Cartesian3.fromRadians(geo.longitude, geo.latitude, 5_000),
+    );
+  }
+  return positions;
+}
+
 export default function Globe({
   satellites,
   selectedId,
   onSelect,
   imagery,
+  observer,
 }: {
   satellites: CatalogSat[];
   selectedId: string;
   onSelect: (id: string) => void;
   imagery: ImageryKey;
+  observer: Observer | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const creditRef = useRef<HTMLDivElement>(null);
@@ -222,6 +241,14 @@ export default function Globe({
       },
     });
 
+    const groundTrack = viewer.entities.add({
+      polyline: {
+        positions: groundTrackPath(sat.satrec, new Date()),
+        width: 1.5,
+        material: new Cesium.ColorMaterialProperty(PHOSPHOR.withAlpha(0.3)),
+      },
+    });
+
     const now = new Date();
     const pv = propagate(sat.satrec, now);
     if (pv) {
@@ -240,9 +267,35 @@ export default function Globe({
       if (!viewer.isDestroyed()) {
         viewer.entities.remove(target);
         viewer.entities.remove(orbit);
+        viewer.entities.remove(groundTrack);
       }
     };
   }, [satellites, selectedId]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !observer) return;
+
+    const marker = viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(observer.lon, observer.lat),
+      point: {
+        pixelSize: 5,
+        color: Cesium.Color.WHITE.withAlpha(0.85),
+        outlineColor: Cesium.Color.WHITE.withAlpha(0.2),
+        outlineWidth: 4,
+      },
+      label: {
+        text: "OBS",
+        font: "11px 'IBM Plex Mono', monospace",
+        fillColor: Cesium.Color.WHITE.withAlpha(0.7),
+        pixelOffset: new Cesium.Cartesian2(0, -16),
+      },
+    });
+
+    return () => {
+      if (!viewer.isDestroyed()) viewer.entities.remove(marker);
+    };
+  }, [observer]);
 
   return (
     <>
