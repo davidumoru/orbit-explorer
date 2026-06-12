@@ -1,8 +1,6 @@
 const ISS_CATALOG_NUMBER = 25544;
 const CELESTRAK_URL = `https://celestrak.org/NORAD/elements/gp.php?CATNR=${ISS_CATALOG_NUMBER}&FORMAT=TLE`;
 
-// TLEs are published a few times a day, so a 2-hour cache is plenty fresh
-// and keeps us polite toward CelesTrak.
 const REVALIDATE_SECONDS = 7200;
 
 export async function GET() {

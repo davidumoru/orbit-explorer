@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import dynamic from "next/dynamic";
+import { IMAGERY_OPTIONS, type ImageryKey } from "./imagery";
 import {
   twoline2satrec,
   propagate,
@@ -25,6 +27,37 @@ type Telemetry = {
 
 const JULIAN_UNIX_EPOCH = 2440587.5;
 const MS_PER_DAY = 86_400_000;
+const IMAGERY_STORAGE_KEY = "orbit-explorer:imagery";
+
+function subscribeToImagery(callback: () => void) {
+  window.addEventListener("storage", callback);
+  return () => window.removeEventListener("storage", callback);
+}
+
+function getImagerySnapshot(): ImageryKey {
+  const stored = window.localStorage.getItem(IMAGERY_STORAGE_KEY);
+  return IMAGERY_OPTIONS.some((option) => option.key === stored)
+    ? (stored as ImageryKey)
+    : "sentinel";
+}
+
+function selectImagery(key: ImageryKey) {
+  window.localStorage.setItem(IMAGERY_STORAGE_KEY, key);
+  window.dispatchEvent(
+    new StorageEvent("storage", { key: IMAGERY_STORAGE_KEY }),
+  );
+}
+
+const Globe = dynamic(() => import("./globe"), {
+  ssr: false,
+  loading: () => (
+    <div className="absolute inset-0 flex items-center justify-center">
+      <span className="animate-blink text-xs tracking-[0.3em] text-foreground/40">
+        LOADING GLOBE
+      </span>
+    </div>
+  ),
+});
 
 function computeTelemetry(satrec: SatRec, time: Date): Telemetry | null {
   const pv = propagate(satrec, time);
@@ -51,6 +84,11 @@ export default function IssTracker() {
   const [name, setName] = useState<string>("ISS (ZARYA)");
   const [telemetry, setTelemetry] = useState<Telemetry | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const imagery = useSyncExternalStore(
+    subscribeToImagery,
+    getImagerySnapshot,
+    () => "sentinel" as ImageryKey,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -127,7 +165,30 @@ export default function IssTracker() {
         </div>
       ) : (
         <>
-          <div className="grid flex-1 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="relative min-h-[320px] flex-1 border-b border-phosphor/15">
+            <Globe satrec={satrec} imagery={imagery} />
+            <div className="absolute right-3 top-3 z-10 flex border border-phosphor/25 bg-background/70 backdrop-blur-sm">
+              {IMAGERY_OPTIONS.map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => selectImagery(option.key)}
+                  className={`px-3 py-1.5 text-[10px] tracking-[0.2em] transition-colors ${
+                    option.key === imagery
+                      ? "bg-phosphor/15 text-phosphor"
+                      : "text-foreground/50 hover:text-foreground/80"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <div className="absolute bottom-2 right-3 z-10 text-[9px] tracking-[0.2em] text-foreground/35">
+              {IMAGERY_OPTIONS.find((option) => option.key === imagery)?.credit}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
             <TelemetryCell
               label="Latitude"
               value={
@@ -199,13 +260,13 @@ function TelemetryCell({
 }) {
   return (
     <div
-      className="reveal flex flex-col justify-center gap-3 border-b border-phosphor/15 px-5 py-8 last:border-b-0 sm:border-r sm:px-8 sm:py-10 sm:nth-[2n]:border-r-0 lg:border-b-0 lg:nth-[2n]:border-r lg:last:border-r-0"
+      className="reveal flex flex-col justify-center gap-2 border-b border-phosphor/15 px-5 py-4 last:border-b-0 sm:border-r sm:px-8 sm:py-5 sm:nth-[2n]:border-r-0 lg:border-b-0 lg:nth-[2n]:border-r lg:last:border-r-0"
       style={{ animationDelay: `${delay * 90}ms` }}
     >
       <span className="text-[11px] uppercase tracking-[0.3em] text-foreground/50">
         {label}
       </span>
-      <span className="text-4xl font-medium text-phosphor tabular-nums xl:text-5xl">
+      <span className="text-2xl font-medium text-phosphor tabular-nums xl:text-3xl">
         {value ?? <span className="text-phosphor/30">––.––––</span>}
         <span className="ml-2 text-base text-foreground/60">{unit}</span>
       </span>
