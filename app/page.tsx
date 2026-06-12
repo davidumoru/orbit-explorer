@@ -8,7 +8,7 @@ export default function Home() {
           <h1 className="text-sm font-semibold tracking-[0.35em] text-foreground">
             ORBIT<span className="text-phosphor">▮</span>EXPLORER
           </h1>
-          <span className="text-[11px] tracking-[0.25em] text-foreground/40">
+          <span className="hidden text-[11px] tracking-[0.25em] text-foreground/40 sm:inline">
             MISSION CONSOLE 01
           </span>
         </header>
@@ -18,11 +18,14 @@ export default function Home() {
         </main>
 
         <footer className="reveal flex flex-wrap items-center justify-between gap-x-6 gap-y-1 border-t border-phosphor/15 px-5 py-3 sm:px-8 [animation-delay:600ms]">
-          <span className="text-[10px] tracking-[0.25em] text-foreground/40">
+          <span className="whitespace-nowrap text-[10px] tracking-[0.25em] text-foreground/40">
             GP DATA · CELESTRAK
           </span>
-          <span className="text-[10px] tracking-[0.25em] text-foreground/40">
-            SGP4 PROPAGATION · COMPUTED CLIENT-SIDE · 1 HZ
+          <span className="whitespace-nowrap text-[10px] tracking-[0.25em] text-foreground/40">
+            <span className="sm:hidden">SGP4 · CLIENT-SIDE · 1 HZ</span>
+            <span className="hidden sm:inline">
+              SGP4 PROPAGATION · COMPUTED CLIENT-SIDE · 1 HZ
+            </span>
           </span>
         </footer>
       </div>

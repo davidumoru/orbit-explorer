@@ -15,6 +15,7 @@ import {
   predictPasses,
   PASS_WINDOW_HOURS,
   type Observer,
+  type Pass,
 } from "./passes";
 import {
   propagate,
@@ -143,6 +144,7 @@ export default function MissionConsole() {
   const [error, setError] = useState<string | null>(null);
   const [locating, setLocating] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const imagery = useSyncExternalStore(
     subscribeToImagery,
     getImagerySnapshot,
@@ -267,7 +269,7 @@ export default function MissionConsole() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="reveal flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-phosphor/15 px-5 py-3 sm:px-8">
-        <div className="flex items-center gap-4">
+        <div className="flex w-full items-center gap-4 sm:w-auto">
           <span
             className={`inline-block size-2 rounded-full ${
               live ? "animate-blink bg-phosphor" : "bg-phosphor/30"
@@ -277,14 +279,29 @@ export default function MissionConsole() {
           <span className="text-xs tracking-[0.3em] text-phosphor">
             {live ? "LIVE" : error ? "FAULT" : "ACQUIRING"}
           </span>
-          <span className="text-xs tracking-[0.2em] text-foreground/60">
-            TGT {(selected?.name ?? "ISS (ZARYA)").toUpperCase()} · NORAD{" "}
-            {selectedId}
-            {selected ? ` · ${orbitRegime(selected.satrec)}` : ""}
-          </span>
+          <button
+            type="button"
+            onClick={() => setPickerOpen(true)}
+            className="ml-auto flex items-center gap-2 text-left text-xs tracking-[0.2em] text-foreground/60 sm:ml-0 md:pointer-events-none"
+          >
+            <span className="max-w-48 truncate sm:hidden">
+              TGT {(selected?.name ?? "ISS (ZARYA)").toUpperCase()}
+            </span>
+            <span className="hidden sm:inline">
+              TGT {(selected?.name ?? "ISS (ZARYA)").toUpperCase()} · NORAD{" "}
+              {selectedId}
+              {selected ? ` · ${orbitRegime(selected.satrec)}` : ""}
+            </span>
+            <span className="text-phosphor md:hidden">▾</span>
+          </button>
         </div>
         <span className="text-xs tracking-[0.2em] text-foreground/60 tabular-nums">
-          {telemetry ? formatUtc(telemetry.time) : "––:––:–– UTC"}
+          <span className="sm:hidden">
+            {telemetry ? formatUtc(telemetry.time).slice(11) : "––:––:–– UTC"}
+          </span>
+          <span className="hidden sm:inline">
+            {telemetry ? formatUtc(telemetry.time) : "––:––:–– UTC"}
+          </span>
         </span>
       </div>
 
@@ -299,7 +316,7 @@ export default function MissionConsole() {
         </div>
       ) : (
         <>
-          <div className="flex min-h-80 flex-1 border-b border-phosphor/15 md:min-h-0">
+          <div className="flex min-h-[50dvh] flex-1 border-b border-phosphor/15 md:min-h-0">
             <aside className="hidden w-72 flex-col border-r border-phosphor/15 md:flex">
               <input
                 value={query}
@@ -308,28 +325,12 @@ export default function MissionConsole() {
                 className="border-b border-phosphor/15 bg-transparent px-4 py-3 text-xs tracking-[0.15em] text-foreground placeholder:text-foreground/30 focus:outline-none"
               />
               <div className="flex-1 overflow-y-auto">
-                {filtered.map((sat) => (
-                  <button
-                    key={sat.id}
-                    type="button"
-                    onClick={() => setSelectedId(sat.id)}
-                    className={`flex w-full items-baseline justify-between gap-2 px-4 py-2 text-left text-xs transition-colors ${
-                      sat.id === selectedId
-                        ? "bg-phosphor/10 text-phosphor"
-                        : "text-foreground/65 hover:bg-phosphor/5 hover:text-foreground"
-                    }`}
-                  >
-                    <span className="truncate">{sat.name}</span>
-                    <span className="shrink-0 text-[9px] text-foreground/35 tabular-nums">
-                      {sat.id}
-                    </span>
-                  </button>
-                ))}
-                {catalog.length > 0 && filtered.length === 0 && (
-                  <p className="px-4 py-3 text-[10px] tracking-[0.2em] text-foreground/35">
-                    NO MATCHES
-                  </p>
-                )}
+                <TargetRows
+                  sats={filtered}
+                  selectedId={selectedId}
+                  onSelect={setSelectedId}
+                  showEmpty={catalog.length > 0}
+                />
               </div>
               <div className="border-t border-phosphor/15 px-4 py-2 text-[10px] tracking-[0.2em] text-foreground/40">
                 {catalog.length} OBJECTS TRACKED
@@ -369,8 +370,8 @@ export default function MissionConsole() {
             </div>
 
             <aside className="hidden w-80 flex-col border-l border-phosphor/15 lg:flex">
-              <div className="flex items-center justify-between border-b border-phosphor/15 px-4 py-3">
-                <span className="text-[10px] tracking-[0.25em] text-foreground/50">
+              <div className="flex items-center justify-between border-b border-phosphor/15 bg-phosphor/10 px-4 py-3">
+                <span className="text-[10px] tracking-[0.25em] text-phosphor">
                   PASS PREDICTIONS
                 </span>
                 {observer && (
@@ -385,71 +386,19 @@ export default function MissionConsole() {
               </div>
 
               {!observer ? (
-                <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
-                  <p className="text-[11px] leading-relaxed text-foreground/50">
-                    Set your ground position to predict when the selected
-                    target rises above your horizon.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={requestLocation}
-                    disabled={locating}
-                    className="border border-phosphor/30 px-4 py-2 text-[10px] tracking-[0.25em] text-phosphor transition-colors hover:bg-phosphor/10 disabled:opacity-50"
-                  >
-                    {locating ? "LOCATING…" : "USE MY LOCATION"}
-                  </button>
-                  {geoError && (
-                    <p className="text-[10px] text-foreground/40">{geoError}</p>
-                  )}
-                </div>
+                <ObserverPrompt
+                  locating={locating}
+                  geoError={geoError}
+                  onRequest={requestLocation}
+                />
               ) : (
                 <div className="flex min-h-0 flex-1 flex-col">
-                  <div className="border-b border-phosphor/10 px-4 py-2 text-[10px] tracking-[0.2em] text-foreground/40 tabular-nums">
-                    OBS {Math.abs(observer.lat).toFixed(3)}°
-                    {observer.lat >= 0 ? "N" : "S"} ·{" "}
-                    {Math.abs(observer.lon).toFixed(3)}°
-                    {observer.lon >= 0 ? "E" : "W"}
-                  </div>
+                  <ObserverLine observer={observer} />
                   <div className="flex-1 overflow-y-auto">
-                    {!passes ? (
-                      <p className="px-4 py-4 text-[10px] tracking-[0.2em] text-foreground/35">
-                        COMPUTING…
-                      </p>
-                    ) : continuouslyVisible ? (
-                      <p className="px-4 py-4 text-[10px] leading-relaxed tracking-[0.2em] text-foreground/50">
-                        CONTINUOUSLY IN VIEW FROM YOUR POSITION
-                      </p>
-                    ) : passes.length === 0 ? (
-                      <p className="px-4 py-4 text-[10px] leading-relaxed tracking-[0.2em] text-foreground/50">
-                        NO PASSES IN NEXT {PASS_WINDOW_HOURS} H
-                      </p>
-                    ) : (
-                      passes.map((pass) => (
-                        <div
-                          key={pass.aosMs}
-                          className="border-b border-phosphor/10 px-4 py-3"
-                        >
-                          <div className="flex items-baseline justify-between text-xs text-foreground/85 tabular-nums">
-                            <span>
-                              {formatPassDay(pass.aosMs)}{" "}
-                              {formatPassTime(pass.aosMs)} →{" "}
-                              {formatPassTime(pass.losMs)}
-                            </span>
-                            <span className="text-phosphor">
-                              {Math.round(pass.maxElevationDeg)}°
-                            </span>
-                          </div>
-                          <div className="mt-1 flex justify-between text-[10px] tracking-[0.15em] text-foreground/40 tabular-nums">
-                            <span>
-                              RISE {compass(pass.aosAzimuthDeg)} ·{" "}
-                              {Math.round((pass.losMs - pass.aosMs) / 60_000)}{" "}
-                              MIN
-                            </span>
-                            <span>MAX EL</span>
-                          </div>
-                        </div>
-                      ))
-                    )}
+                    <PassList
+                      passes={passes}
+                      continuouslyVisible={continuouslyVisible}
+                    />
                   </div>
                   <div className="border-t border-phosphor/15 px-4 py-2 text-[10px] tracking-[0.2em] text-foreground/40">
                     NEXT {PASS_WINDOW_HOURS} H · LOCAL TIME
@@ -512,9 +461,209 @@ export default function MissionConsole() {
               value={tleAgeHours !== null ? `${tleAgeHours.toFixed(1)} H` : "–"}
             />
           </div>
+
+          <div className="reveal border-t border-phosphor/15 lg:hidden">
+            <div className="flex items-center justify-between border-b border-phosphor/15 bg-phosphor/10 px-5 py-3">
+              <span className="text-[10px] tracking-[0.25em] text-phosphor">
+                PASS PREDICTIONS
+              </span>
+              {observer && (
+                <button
+                  type="button"
+                  onClick={() => storeObserver(null)}
+                  className="whitespace-nowrap text-[9px] tracking-[0.2em] text-foreground/35 transition-colors hover:text-foreground/70"
+                >
+                  CLEAR LOC
+                </button>
+              )}
+            </div>
+            {!observer ? (
+              <ObserverPrompt
+                locating={locating}
+                geoError={geoError}
+                onRequest={requestLocation}
+              />
+            ) : (
+              <>
+                <ObserverLine observer={observer} />
+                <PassList
+                  passes={passes}
+                  continuouslyVisible={continuouslyVisible}
+                />
+                <div className="px-5 py-2 text-[10px] tracking-[0.2em] text-foreground/40">
+                  NEXT {PASS_WINDOW_HOURS} H · LOCAL TIME
+                </div>
+              </>
+            )}
+          </div>
         </>
       )}
+
+      {pickerOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-background md:hidden">
+          <div className="flex items-center justify-between border-b border-phosphor/15 px-5 py-4">
+            <span className="text-xs tracking-[0.3em] text-foreground/60">
+              SELECT TARGET
+            </span>
+            <button
+              type="button"
+              onClick={() => setPickerOpen(false)}
+              className="text-xs tracking-[0.2em] text-phosphor"
+            >
+              CLOSE
+            </button>
+          </div>
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="SEARCH TARGET / NORAD ID"
+            autoFocus
+            className="border-b border-phosphor/15 bg-transparent px-5 py-3 text-xs tracking-[0.15em] text-foreground placeholder:text-foreground/30 focus:outline-none"
+          />
+          <div className="flex-1 overflow-y-auto">
+            <TargetRows
+              sats={filtered}
+              selectedId={selectedId}
+              onSelect={(id) => {
+                setSelectedId(id);
+                setPickerOpen(false);
+              }}
+              showEmpty={catalog.length > 0}
+            />
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+function TargetRows({
+  sats,
+  selectedId,
+  onSelect,
+  showEmpty,
+}: {
+  sats: CatalogSat[];
+  selectedId: string;
+  onSelect: (id: string) => void;
+  showEmpty: boolean;
+}) {
+  return (
+    <>
+      {sats.map((sat) => (
+        <button
+          key={sat.id}
+          type="button"
+          onClick={() => onSelect(sat.id)}
+          className={`flex w-full items-baseline justify-between gap-2 px-4 py-2 text-left text-xs transition-colors ${
+            sat.id === selectedId
+              ? "bg-phosphor/10 text-phosphor"
+              : "text-foreground/65 hover:bg-phosphor/5 hover:text-foreground"
+          }`}
+        >
+          <span className="truncate">{sat.name}</span>
+          <span className="shrink-0 text-[9px] text-foreground/35 tabular-nums">
+            {sat.id}
+          </span>
+        </button>
+      ))}
+      {showEmpty && sats.length === 0 && (
+        <p className="px-4 py-3 text-[10px] tracking-[0.2em] text-foreground/35">
+          NO MATCHES
+        </p>
+      )}
+    </>
+  );
+}
+
+function ObserverPrompt({
+  locating,
+  geoError,
+  onRequest,
+}: {
+  locating: boolean;
+  geoError: string | null;
+  onRequest: () => void;
+}) {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-8 text-center">
+      <p className="text-[11px] leading-relaxed text-foreground/50">
+        Set your ground position to predict when the selected target rises above
+        your horizon.
+      </p>
+      <button
+        type="button"
+        onClick={onRequest}
+        disabled={locating}
+        className="border border-phosphor/30 px-4 py-2 text-[10px] tracking-[0.25em] text-phosphor transition-colors hover:bg-phosphor/10 disabled:opacity-50"
+      >
+        {locating ? "LOCATING…" : "USE MY LOCATION"}
+      </button>
+      {geoError && <p className="text-[10px] text-foreground/40">{geoError}</p>}
+    </div>
+  );
+}
+
+function ObserverLine({ observer }: { observer: Observer }) {
+  return (
+    <div className="border-b border-phosphor/10 px-4 py-2 text-[10px] tracking-[0.2em] text-foreground/40 tabular-nums">
+      OBS {Math.abs(observer.lat).toFixed(3)}°{observer.lat >= 0 ? "N" : "S"} ·{" "}
+      {Math.abs(observer.lon).toFixed(3)}°{observer.lon >= 0 ? "E" : "W"}
+    </div>
+  );
+}
+
+function PassList({
+  passes,
+  continuouslyVisible,
+}: {
+  passes: Pass[] | null;
+  continuouslyVisible: boolean | null;
+}) {
+  if (!passes) {
+    return (
+      <p className="px-4 py-4 text-[10px] tracking-[0.2em] text-foreground/35">
+        COMPUTING…
+      </p>
+    );
+  }
+  if (continuouslyVisible) {
+    return (
+      <p className="px-4 py-4 text-[10px] leading-relaxed tracking-[0.2em] text-foreground/50">
+        CONTINUOUSLY IN VIEW FROM YOUR POSITION
+      </p>
+    );
+  }
+  if (passes.length === 0) {
+    return (
+      <p className="px-4 py-4 text-[10px] leading-relaxed tracking-[0.2em] text-foreground/50">
+        NO PASSES IN NEXT {PASS_WINDOW_HOURS} H
+      </p>
+    );
+  }
+  return (
+    <>
+      {passes.map((pass) => (
+        <div key={pass.aosMs} className="border-b border-phosphor/10 px-4 py-3">
+          <div className="flex items-baseline justify-between text-xs text-foreground/85 tabular-nums">
+            <span>
+              {formatPassDay(pass.aosMs)} {formatPassTime(pass.aosMs)} →{" "}
+              {formatPassTime(pass.losMs)}
+            </span>
+            <span className="text-phosphor">
+              {Math.round(pass.maxElevationDeg)}°
+            </span>
+          </div>
+          <div className="mt-1 flex justify-between text-[10px] tracking-[0.15em] text-foreground/40 tabular-nums">
+            <span>
+              RISE {compass(pass.aosAzimuthDeg)} ·{" "}
+              {Math.round((pass.losMs - pass.aosMs) / 60_000)} MIN
+            </span>
+            <span>MAX EL</span>
+          </div>
+        </div>
+      ))}
+    </>
   );
 }
 
