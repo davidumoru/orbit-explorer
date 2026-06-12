@@ -9,4 +9,5 @@ await rm(target, { recursive: true, force: true });
 for (const dir of ["Workers", "ThirdParty", "Assets", "Widgets"]) {
   await cp(`${source}/${dir}`, `${target}/${dir}`, { recursive: true });
 }
+await cp(`${source}/Cesium.js`, `${target}/Cesium.js`);
 console.log("Copied Cesium static assets to public/cesium");
