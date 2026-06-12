@@ -1,9 +1,9 @@
-import IssTracker from "./components/iss-tracker";
+import MissionConsole from "./components/mission-console";
 
 export default function Home() {
   return (
-    <div className="flex flex-1 flex-col p-3 sm:p-5">
-      <div className="flex flex-1 flex-col border border-phosphor/20">
+    <div className="flex min-h-0 flex-1 flex-col p-3 sm:p-5">
+      <div className="flex min-h-0 flex-1 flex-col border border-phosphor/20">
         <header className="reveal flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 border-b border-phosphor/15 px-5 py-4 sm:px-8">
           <h1 className="text-sm font-semibold tracking-[0.35em] text-foreground">
             ORBIT<span className="text-phosphor">▮</span>EXPLORER
@@ -13,8 +13,8 @@ export default function Home() {
           </span>
         </header>
 
-        <main className="flex flex-1 flex-col">
-          <IssTracker />
+        <main className="flex min-h-0 flex-1 flex-col">
+          <MissionConsole />
         </main>
 
         <footer className="reveal flex flex-wrap items-center justify-between gap-x-6 gap-y-1 border-t border-phosphor/15 px-5 py-3 sm:px-8 [animation-delay:600ms]">

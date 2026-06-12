@@ -13,6 +13,7 @@ import {
 } from "satellite.js";
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import type { ImageryKey } from "./imagery";
+import type { CatalogSat } from "./catalog";
 
 declare global {
   interface Window {
@@ -29,13 +30,8 @@ const ORBIT_WINDOW_MIN = 45;
 const ORBIT_STEP_SEC = 30;
 
 function gibsProvider(layer: string) {
-  return new Cesium.WebMapTileServiceImageryProvider({
-    url: "https://gibs.earthdata.nasa.gov/wmts/epsg4326/best/wmts.cgi",
-    layer,
-    style: "default",
-    format: "image/jpeg",
-    tileMatrixSetID: "500m",
-    tilingScheme: new Cesium.GeographicTilingScheme(),
+  return new Cesium.UrlTemplateImageryProvider({
+    url: `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${layer}/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpeg`,
     maximumLevel: 8,
     credit: new Cesium.Credit("NASA GIBS"),
   });
@@ -84,10 +80,14 @@ function orbitPath(satrec: SatRec, around: Date): Cesium.Cartesian3[] {
 }
 
 export default function Globe({
-  satrec,
+  satellites,
+  selectedId,
+  onSelect,
   imagery,
 }: {
-  satrec: SatRec | null;
+  satellites: CatalogSat[];
+  selectedId: string;
+  onSelect: (id: string) => void;
   imagery: ImageryKey;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -139,12 +139,61 @@ export default function Globe({
 
   useEffect(() => {
     const viewer = viewerRef.current;
-    if (!viewer || !satrec) return;
+    if (!viewer || satellites.length === 0) return;
 
-    const iss = viewer.entities.add({
-      name: "ISS (ZARYA)",
+    const points = new Cesium.PointPrimitiveCollection();
+    const pointsById = new Map<string, Cesium.PointPrimitive>();
+    const now = new Date();
+    for (const sat of satellites) {
+      const position = satellitePosition(sat.satrec, now);
+      if (!position) continue;
+      pointsById.set(
+        sat.id,
+        points.add({
+          id: sat.id,
+          position,
+          pixelSize: 3,
+          color: PHOSPHOR.withAlpha(0.45),
+        }),
+      );
+    }
+    viewer.scene.primitives.add(points);
+
+    const interval = setInterval(() => {
+      const time = new Date();
+      for (const sat of satellites) {
+        const point = pointsById.get(sat.id);
+        if (!point) continue;
+        const position = satellitePosition(sat.satrec, time);
+        if (position) point.position = position;
+      }
+    }, 1000);
+
+    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+    handler.setInputAction(
+      (movement: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
+        const picked = viewer.scene.pick(movement.position);
+        if (picked && typeof picked.id === "string") onSelect(picked.id);
+      },
+      Cesium.ScreenSpaceEventType.LEFT_CLICK,
+    );
+
+    return () => {
+      clearInterval(interval);
+      handler.destroy();
+      if (!viewer.isDestroyed()) viewer.scene.primitives.remove(points);
+    };
+  }, [satellites, onSelect]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    const sat = satellites.find((s) => s.id === selectedId);
+    if (!viewer || !sat) return;
+
+    const target = viewer.entities.add({
+      name: sat.name,
       position: new Cesium.CallbackPositionProperty(
-        () => satellitePosition(satrec, new Date()),
+        () => satellitePosition(sat.satrec, new Date()),
         false,
         Cesium.ReferenceFrame.FIXED,
       ),
@@ -155,7 +204,7 @@ export default function Globe({
         outlineWidth: 5,
       },
       label: {
-        text: "ISS",
+        text: sat.name,
         font: "12px 'IBM Plex Mono', monospace",
         fillColor: PHOSPHOR,
         pixelOffset: new Cesium.Cartesian2(0, -20),
@@ -164,7 +213,7 @@ export default function Globe({
 
     const orbit = viewer.entities.add({
       polyline: {
-        positions: orbitPath(satrec, new Date()),
+        positions: orbitPath(sat.satrec, new Date()),
         width: 4,
         material: new Cesium.PolylineGlowMaterialProperty({
           color: PHOSPHOR.withAlpha(0.6),
@@ -174,25 +223,26 @@ export default function Globe({
     });
 
     const now = new Date();
-    const pv = propagate(satrec, now);
+    const pv = propagate(sat.satrec, now);
     if (pv) {
       const geo = eciToGeodetic(pv.position, gstime(now));
-      viewer.camera.setView({
+      viewer.camera.flyTo({
         destination: Cesium.Cartesian3.fromDegrees(
           degreesLong(geo.longitude),
           degreesLat(geo.latitude),
-          22_000_000,
+          Math.max(geo.height * 1000 * 3, 22_000_000),
         ),
+        duration: 1.5,
       });
     }
 
     return () => {
       if (!viewer.isDestroyed()) {
-        viewer.entities.remove(iss);
+        viewer.entities.remove(target);
         viewer.entities.remove(orbit);
       }
     };
-  }, [satrec]);
+  }, [satellites, selectedId]);
 
   return (
     <>

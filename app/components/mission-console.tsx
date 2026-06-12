@@ -1,10 +1,16 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
 import { IMAGERY_OPTIONS, type ImageryKey } from "./imagery";
 import {
-  twoline2satrec,
+  CATALOG_GROUPS,
+  ISS_ID,
+  orbitRegime,
+  parseCatalog,
+  type CatalogSat,
+} from "./catalog";
+import {
   propagate,
   gstime,
   eciToGeodetic,
@@ -14,8 +20,6 @@ import {
   SatRecError,
   type SatRec,
 } from "satellite.js";
-
-type Tle = { name: string; line1: string; line2: string };
 
 type Telemetry = {
   lat: number;
@@ -79,9 +83,10 @@ function formatUtc(date: Date): string {
   return date.toISOString().replace("T", " ").slice(0, 19) + " UTC";
 }
 
-export default function IssTracker() {
-  const [satrec, setSatrec] = useState<SatRec | null>(null);
-  const [name, setName] = useState<string>("ISS (ZARYA)");
+export default function MissionConsole() {
+  const [catalog, setCatalog] = useState<CatalogSat[]>([]);
+  const [selectedId, setSelectedId] = useState<string>(ISS_ID);
+  const [query, setQuery] = useState("");
   const [telemetry, setTelemetry] = useState<Telemetry | null>(null);
   const [error, setError] = useState<string | null>(null);
   const imagery = useSyncExternalStore(
@@ -92,48 +97,76 @@ export default function IssTracker() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/tle")
-      .then((res) => {
-        if (!res.ok) throw new Error(`TLE fetch failed (HTTP ${res.status})`);
-        return res.json() as Promise<Tle>;
-      })
-      .then((tle) => {
-        if (cancelled) return;
-        setName(tle.name);
-        setSatrec(twoline2satrec(tle.line1, tle.line2));
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setError(err.message);
-      });
+    Promise.all(
+      CATALOG_GROUPS.map((group) =>
+        fetch(`/api/satellites?group=${group.key}`)
+          .then((res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.json() as Promise<
+              { name: string; line1: string; line2: string }[]
+            >;
+          })
+          .then((tles) => parseCatalog(group.key, tles))
+          .catch(() => [] as CatalogSat[]),
+      ),
+    ).then((groups) => {
+      if (cancelled) return;
+      const merged = new Map<string, CatalogSat>();
+      for (const sat of groups.flat()) {
+        if (!merged.has(sat.id)) merged.set(sat.id, sat);
+      }
+      if (merged.size === 0) {
+        setError("Catalog fetch failed — CelesTrak unreachable");
+      } else {
+        setCatalog(
+          [...merged.values()].sort((a, b) => a.name.localeCompare(b.name)),
+        );
+      }
+    });
     return () => {
       cancelled = true;
     };
   }, []);
 
+  const selected = useMemo(
+    () => catalog.find((sat) => sat.id === selectedId) ?? null,
+    [catalog, selectedId],
+  );
+
   useEffect(() => {
-    if (!satrec) return;
+    if (!selected) return;
     const tick = () => {
-      const next = computeTelemetry(satrec, new Date());
+      const next = computeTelemetry(selected.satrec, new Date());
       if (next) setTelemetry(next);
       else setError("SGP4 propagation failed — orbital elements may be stale");
     };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [satrec]);
+  }, [selected]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toUpperCase();
+    if (!q) return catalog;
+    return catalog.filter(
+      (sat) => sat.name.toUpperCase().includes(q) || sat.id.includes(q),
+    );
+  }, [catalog, query]);
 
   const live = telemetry !== null && error === null;
-  const periodMin = satrec ? (2 * Math.PI) / satrec.no : null;
-  const inclinationDeg = satrec ? radiansToDegrees(satrec.inclo) : null;
+  const periodMin = selected ? (2 * Math.PI) / selected.satrec.no : null;
+  const inclinationDeg = selected
+    ? radiansToDegrees(selected.satrec.inclo)
+    : null;
   const tleAgeHours =
-    satrec && telemetry
+    selected && telemetry
       ? (telemetry.time.getTime() -
-          (satrec.jdsatepoch - JULIAN_UNIX_EPOCH) * MS_PER_DAY) /
+          (selected.satrec.jdsatepoch - JULIAN_UNIX_EPOCH) * MS_PER_DAY) /
         3_600_000
       : null;
 
   return (
-    <div className="flex flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       <div className="reveal flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-phosphor/15 px-5 py-3 sm:px-8">
         <div className="flex items-center gap-4">
           <span
@@ -146,7 +179,9 @@ export default function IssTracker() {
             {live ? "LIVE" : error ? "FAULT" : "ACQUIRING"}
           </span>
           <span className="text-xs tracking-[0.2em] text-foreground/60">
-            TGT {name.toUpperCase()} · NORAD 25544 · LEO
+            TGT {(selected?.name ?? "ISS (ZARYA)").toUpperCase()} · NORAD{" "}
+            {selectedId}
+            {selected ? ` · ${orbitRegime(selected.satrec)}` : ""}
           </span>
         </div>
         <span className="text-xs tracking-[0.2em] text-foreground/60 tabular-nums">
@@ -165,26 +200,72 @@ export default function IssTracker() {
         </div>
       ) : (
         <>
-          <div className="relative min-h-[320px] flex-1 border-b border-phosphor/15">
-            <Globe satrec={satrec} imagery={imagery} />
-            <div className="absolute right-3 top-3 z-10 flex border border-phosphor/25 bg-background/70 backdrop-blur-sm">
-              {IMAGERY_OPTIONS.map((option) => (
-                <button
-                  key={option.key}
-                  type="button"
-                  onClick={() => selectImagery(option.key)}
-                  className={`px-3 py-1.5 text-[10px] tracking-[0.2em] transition-colors ${
-                    option.key === imagery
-                      ? "bg-phosphor/15 text-phosphor"
-                      : "text-foreground/50 hover:text-foreground/80"
-                  }`}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            <div className="absolute bottom-2 right-3 z-10 text-[9px] tracking-[0.2em] text-foreground/35">
-              {IMAGERY_OPTIONS.find((option) => option.key === imagery)?.credit}
+          <div className="flex min-h-80 flex-1 border-b border-phosphor/15 md:min-h-0">
+            <aside className="hidden w-72 flex-col border-r border-phosphor/15 md:flex">
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="SEARCH TARGET / NORAD ID"
+                className="border-b border-phosphor/15 bg-transparent px-4 py-3 text-xs tracking-[0.15em] text-foreground placeholder:text-foreground/30 focus:outline-none"
+              />
+              <div className="flex-1 overflow-y-auto">
+                {filtered.map((sat) => (
+                  <button
+                    key={sat.id}
+                    type="button"
+                    onClick={() => setSelectedId(sat.id)}
+                    className={`flex w-full items-baseline justify-between gap-2 px-4 py-2 text-left text-xs transition-colors ${
+                      sat.id === selectedId
+                        ? "bg-phosphor/10 text-phosphor"
+                        : "text-foreground/65 hover:bg-phosphor/5 hover:text-foreground"
+                    }`}
+                  >
+                    <span className="truncate">{sat.name}</span>
+                    <span className="shrink-0 text-[9px] text-foreground/35 tabular-nums">
+                      {sat.id}
+                    </span>
+                  </button>
+                ))}
+                {catalog.length > 0 && filtered.length === 0 && (
+                  <p className="px-4 py-3 text-[10px] tracking-[0.2em] text-foreground/35">
+                    NO MATCHES
+                  </p>
+                )}
+              </div>
+              <div className="border-t border-phosphor/15 px-4 py-2 text-[10px] tracking-[0.2em] text-foreground/40">
+                {catalog.length} OBJECTS TRACKED
+              </div>
+            </aside>
+
+            <div className="relative flex-1">
+              <Globe
+                satellites={catalog}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+                imagery={imagery}
+              />
+              <div className="absolute right-3 top-3 z-10 flex border border-phosphor/25 bg-background/70 backdrop-blur-sm">
+                {IMAGERY_OPTIONS.map((option) => (
+                  <button
+                    key={option.key}
+                    type="button"
+                    onClick={() => selectImagery(option.key)}
+                    className={`px-3 py-1.5 text-[10px] tracking-[0.2em] transition-colors ${
+                      option.key === imagery
+                        ? "bg-phosphor/15 text-phosphor"
+                        : "text-foreground/50 hover:text-foreground/80"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <div className="absolute bottom-2 right-3 z-10 text-[9px] tracking-[0.2em] text-foreground/35">
+                {
+                  IMAGERY_OPTIONS.find((option) => option.key === imagery)
+                    ?.credit
+                }
+              </div>
             </div>
           </div>
 
